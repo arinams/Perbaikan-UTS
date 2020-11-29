@@ -1,0 +1,188 @@
+---
+title: "Perbaikan UTS"
+author: "Arina Mana Sikana"
+date: "11/30/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1.  Import Data
+```{r}
+setwd("D:/DMKM/UTS/hcc-survival/hcc-survival")
+data1 <- read.table("hcc-data.txt", sep = ",")
+head(data1)
+```
+
+2. Preprocessing Data
+
+a. Ubah Type Variable
+
+```{r}
+str(data1)
+
+# definisikan '?' sebagai NA's value
+library(dplyr)
+data1 <- na_if(data1, "?")
+
+## Ubah type variabel
+data1$V1 <- as.factor(data1$V1)
+data1$V3 <- as.factor(data1$V3)
+data1$V8 <- as.factor(data1$V8)
+data1$V27 <- as.factor(data1$V27)
+data1$V50 <- as.factor(data1$V50)
+data1$V24 <- as.numeric(data1$V24)
+data1$V25 <- as.numeric(data1$V25)
+data1$V26 <- as.numeric(data1$V26)
+for(i in 30:43) {
+  data1[,i] <- as.numeric(data1[,i])
+}
+data1$V44 <- as.numeric(data1$V44)
+for(i in 45:49) {
+  data1[,i] <- as.numeric(data1[,i])
+}
+
+str(data1)
+```
+
+b. Missing Value
+
+```{r}
+# Melihat missing value
+sapply(data1, function(x) sum(is.na(x)))
+
+# visualisasi missing value
+library(visdat)
+vis_miss(data1)
+
+# Subset variabel yang jumlah missing valuenya besar
+data2 <- data1[, -c(5, 9, 10, 18, 25, 26, 46, 47, 48, 49)]
+
+str(data2)
+vis_miss(data2)
+```
+
+c. Imputasi
+
+```{r}
+# Imputasi mean untuk variabel numerik
+for(i in 1:length(data2)) {
+  if(is.numeric(data2[,i])){
+    data2[is.na(data2[,i]), i] <- mean(data2[,i], na.rm=TRUE)
+  }
+}
+
+# Imputasi modus untuk variabel kategorik
+my_mode <- function(x) {  # Create mode function 
+  unique_x <- unique(x)
+  mode <- unique_x[which.max(tabulate(match(x, unique_x)))]
+  mode
+}
+
+for(i in 1:length(data2)) {
+  if(is.factor(data2[,i])){
+    data2[is.na(data2[,i]), i] <- my_mode(data2[!is.na(data2[,i]),i])
+  }
+}
+
+vis_miss(data2)
+```
+
+3. Pembagian Training dan Testing Dataset
+
+```{r}
+
+## Split Validation
+set.seed(123) # angka random
+sampling <- sample(1:nrow(data2), 0.8*nrow(data2))
+training_set <- data2[sampling,]
+test_set <- data2[-sampling,]
+
+## Cross Validation
+library(caret)
+myControl <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = FALSE
+)
+```
+
+4. Model untuk klasifikasi
+
+```{r}
+model <- V50 ~ .
+```
+
+5. Klasifikasi
+
+a. Model Random Forest
+
+```{r}
+library(randomForest)
+set.seed(123)
+rfGrid <-  expand.grid(mtry = (1:10)*3)
+rf_cv <- train(model, data=training_set,
+               method='rf',
+               trControl=myControl,
+               tuneGrid = rfGrid)
+plot(rf_cv, main = "Akurasi Model Random Farost Untuk Beberapa Nilai mtry", xlab = "mtry")
+rf_cv
+```
+
+
+b. Model Naive Bayes
+
+```{r}
+library(naivebayes)
+set.seed(123)
+nbGrid <- expand.grid(laplace = 0.1,
+                      usekernel = TRUE,
+                      adjust=(1:10)*0.1)
+
+nb_cv <- train(model, data=training_set,
+               method='naive_bayes',
+               trControl=myControl,
+               tuneGrid = nbGrid)
+plot(nb_cv, main = "Akurasi Model Naive Bayes \n Untuk Beberapa Nilai Bandwith Adjustment")
+nb_cv
+```
+
+
+
+c. Model Support Vector Machine
+
+```{r}
+set.seed(123)
+svm_cv <- train(model, data=training_set,
+                method='svmPoly',
+                trControl=myControl,
+                tune.length = 5)
+plot(svm_cv, main = "Akurasi Model Support Vector Machine Untuk Beberapa Nilai \n Polinomial Degree, Cost, dan Scale")
+svm_cv
+```
+
+
+d. Model Neural Network
+
+```{r}
+library(neuralnet)
+training_set_num <- training_set[, sapply(training_set, is.numeric)]
+test_set_num <- test_set[, sapply(test_set, is.numeric)]
+
+V50 <- recode(training_set$V50, "1" = 1, "0" = 0) 
+training_set_num <- cbind(training_set_num, V50)
+
+V50 <- recode(test_set$V50, "1" = 1, "0" = 0)  
+test_set_num <- cbind(test_set_num, V50)
+
+
+set.seed(100)
+nn <- neuralnet(model, data = training_set_num, hidden = c(3, 3), linear.output = FALSE)
+prediksi <- compute(nn, test_set_num[, -18])
+pred <- ifelse(prediksi$net.result>0.5, 1, 0)
+confusionMatrix(table(pred, test_set$V50))
+
+plot(nn)
+```
